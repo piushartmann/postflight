@@ -75,7 +75,9 @@ export function JobsBar() {
                   title={
                     STOPPABLE[job.kind]
                       ? "Stop this job"
-                      : "A merge or a proxy is not cancelled: the next scan would start it again"
+                      : job.kind === "analysis"
+                        ? "Analysis is not cancelled: it will finish or fail on the worker"
+                        : "A merge or a proxy is not cancelled: the next scan would start it again"
                   }
                 >
                   <Button

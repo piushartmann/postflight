@@ -696,7 +696,10 @@ function Editor({
     queryKey: ["grade", gradeId],
     queryFn: () => api.grade(gradeId),
     refetchInterval: (query) =>
-      ["queued", "running"].includes(query.state.data?.state ?? "") ? 2_000 : false,
+      query.state.data?.analysis_pending ||
+      ["queued", "running"].includes(query.state.data?.state ?? "")
+        ? 2_000
+        : false,
   });
 
   useEffect(() => {

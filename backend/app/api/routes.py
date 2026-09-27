@@ -206,6 +206,16 @@ def _grade_out(session: Session, grade: Grade) -> schemas.GradeOut:
     render_path = to_absolute(render.out_path) if render else None
     out_path = to_absolute(grade.out_path)
     analysis = (render.analysis if render else None) or {}
+    analysis_pending = bool(
+        render
+        and session.exec(
+            select(Job).where(
+                Job.render_id == render.id,
+                Job.kind == JobKind.ANALYSIS,
+                Job.state.in_((JobState.QUEUED, JobState.RUNNING)),
+            )
+        ).first()
+    )
     return schemas.GradeOut(
         id=grade.id or 0,
         render_id=grade.render_id,
@@ -217,6 +227,7 @@ def _grade_out(session: Session, grade: Grade) -> schemas.GradeOut:
         progress=grade.progress,
         params=grading_service.merge_params(grade.params),
         analysis=analysis,
+        analysis_pending=analysis_pending,
         # Off the clip, not off this grade: where the two points would go if measured.
         suggested=grading_service.suggest_levels(analysis),
         out_name=out_path.name if out_path else None,
@@ -264,26 +275,33 @@ def _get_render(session: Session, render_id: int) -> Render:
     return render
 
 
-def _analyse_render(session: Session, render: Render) -> dict:
-    """What signalstats measured on the stabilized clip, measured once.
-
-    It lives on the render because it describes the clip and not the look: the grades
-    of one clip all read the same numbers, and this is a decode pass of a few seconds
-    that must not run once per grade.
-    """
-    if render.analysis:
-        return render.analysis
-    source = to_absolute(render.out_path)
-    if source is None or not source.exists():
-        return {}
-    try:
-        render.analysis = grading_service.analyse(source).to_dict()
-    except (grading_service.GradeError, OSError) as exc:
-        log.warning("Analysis failed for render %s: %s", render.id, exc)
-        return {}
-    session.add(render)
+def _request_analysis(session: Session, render: Render) -> None:
+    """Ask a worker to measure this clip once, without blocking the API request."""
+    if render.analysis or not render.out_path:
+        return
+    active = session.exec(
+        select(Job).where(
+            Job.render_id == render.id,
+            Job.kind == JobKind.ANALYSIS,
+            Job.state.in_((JobState.QUEUED, JobState.RUNNING)),
+        )
+    ).first()
+    previous = session.exec(
+        select(Job).where(Job.render_id == render.id, Job.kind == JobKind.ANALYSIS)
+    ).first()
+    if active is not None or (previous is not None and previous.state == JobState.FAILED):
+        return
+    session.add(
+        Job(
+            kind=JobKind.ANALYSIS,
+            state=JobState.QUEUED,
+            priority=55,
+            sequence_id=render.sequence_id,
+            render_id=render.id,
+            payload={"render_id": render.id},
+        )
+    )
     session.commit()
-    return render.analysis
 
 
 def _get_grade(session: Session, grade_id: int) -> Grade:
@@ -1411,11 +1429,11 @@ async def list_render_grades(
 ) -> list[schemas.GradeOut]:
     """Every grade on one clip, oldest first, and nothing created.
 
-    A grade exists because someone made it. The clip's own measurement is taken here,
-    on the way in, since this is what opening a clip asks for.
+    Request the clip measurement from the worker without making this API call wait for
+    ffmpeg. The response carries the current result and whether a job is pending.
     """
     render = _get_render(session, render_id)
-    await run_in_threadpool(_analyse_render, session, render)
+    _request_analysis(session, render)
     grades = session.exec(
         select(Grade).where(Grade.render_id == render.id).order_by(Grade.id)  # type: ignore[arg-type]
     ).all()
@@ -1465,17 +1483,11 @@ def put_grade(
 async def get_grade(
     grade_id: int, session: Session = Depends(get_session)
 ) -> schemas.GradeOut:
-    """One grade, and the measurement of the clip it sits on.
-
-    The analysis is taken here as well as on the list, because this is the route the
-    editor opens with: it carries `suggested` and the three timestamps worth previewing,
-    and without it the Darkest / Median / Brightest buttons have nothing to point at.
-    Measured once per clip, then read off the render.
-    """
+    """One grade and the worker measurement of the clip it sits on."""
     grade = _get_grade(session, grade_id)
     render = session.get(Render, grade.render_id)
     if render is not None:
-        await run_in_threadpool(_analyse_render, session, render)
+        _request_analysis(session, render)
     return _grade_out(session, grade)
 
 
@@ -1653,11 +1665,10 @@ def cancel_job(job_id: int, session: Session = Depends(get_session)) -> dict:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown job")
     if job.state not in (JobState.QUEUED, JobState.RUNNING):
         raise HTTPException(status.HTTP_409_CONFLICT, "this job is already finished")
-    if job.kind in (JobKind.MERGE, JobKind.PROXY):
+    if job.kind in (JobKind.MERGE, JobKind.PROXY, JobKind.ANALYSIS):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "a merge or a proxy is what makes the rush usable, and the next scan would "
-            "start it again",
+            "this job is not cancellable",
         )
 
     if job.kind == JobKind.GRADE:

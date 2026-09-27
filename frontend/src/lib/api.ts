@@ -183,6 +183,7 @@ export interface Grade {
   progress: number;
   params: GradeParams;
   analysis: Partial<GradeAnalysis>;
+  analysis_pending: boolean;
   /** Where the two points would go if measured off this clip, or null for nowhere.
    *  The judgement is the server's; the button just writes it into the sliders. */
   suggested: { black_point: number; white_point: number } | null;

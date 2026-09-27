@@ -9,6 +9,8 @@ once for all of them.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -16,7 +18,6 @@ from sqlmodel import Session, select
 from app import dispatch
 from app.api import routes, schemas
 from app.models import Grade, GradeState, Job, JobKind, JobState, Render, RenderState, Sequence
-from app.services import grading as grading_service
 
 
 def _clip(session: Session, seq: Sequence, template: str = "h_1080") -> Render:
@@ -208,30 +209,34 @@ def test_deleting_the_file_keeps_the_look(session: Session, sequence: Sequence):
 
 
 def test_the_clip_is_measured_once_for_all_its_grades(
-    session: Session, sequence: Sequence, monkeypatch
+    session: Session, sequence: Sequence
 ):
-    """The analysis moved from the grade to the render, and this is why: it measures the
-    clip, not the look. It is a decode pass of a few seconds, and it used to be stored
-    per grade, so five looks on one clip would have run it five times."""
+    """Analysis is one worker job for the render, shared by every grade on the clip."""
     render = _clip(session, sequence)
-    runs = []
+    grade = _put(session, render, "Golden hour", temperature=7400)
 
-    def fake_analyse(source):  # noqa: ANN001, ANN202
-        runs.append(source)
-        return grading_service.Analysis(
-            frames=10, y_low=64, y_high=940, y_avg=500, sat_avg=40,
-            clipped_black=0.0, clipped_white=0.0, looks_log=False,
-            darkest_ms=0.0, median_ms=500.0, brightest_ms=900.0,
-        )
+    first = asyncio.run(routes.get_grade(grade.id, session=session))
+    second = asyncio.run(routes.get_grade(grade.id, session=session))
+    jobs = session.exec(select(Job).where(Job.kind == JobKind.ANALYSIS)).all()
 
-    monkeypatch.setattr(grading_service, "analyse", fake_analyse)
-    monkeypatch.setattr(routes, "to_absolute", lambda path: __import__("pathlib").Path(__file__))
+    assert first.analysis == {}
+    assert first.analysis_pending is True
+    assert second.analysis_pending is True
+    assert len(jobs) == 1
+    assert dispatch.job_inputs(session, jobs[0]) == ["out/clip.mp4"]
 
-    routes._analyse_render(session, render)
-    routes._analyse_render(session, render)
+    worker = dispatch.upsert_worker(session, "analysis-worker", {}, 1)
+    assert dispatch._take(session, jobs[0].id, worker.id or 0)
+    assert dispatch.complete(
+        session,
+        jobs[0].id,
+        worker.id or 0,
+        {"analysis": {"frames": 10}},
+    ) is True
 
-    assert len(runs) == 1
-    assert (session.get(Render, render.id) or render).analysis["frames"] == 10
+    finished = asyncio.run(routes.get_grade(grade.id, session=session))
+    assert finished.analysis == {"frames": 10}
+    assert finished.analysis_pending is False
 
 
 def test_the_heartbeat_moves_the_grade_s_own_bar(session: Session, sequence: Sequence):

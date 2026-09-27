@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import threading
 import time
+from pathlib import Path
 
 import pytest
 
 from app import worker as worker_mod
+from app import executor as executor_mod
+from app.config import settings
 from app.executor import SpecError, execute
 from app.services import procs
 from app.worker import Heartbeat, TransportError
@@ -143,6 +146,27 @@ def test_a_missing_part_is_named(session):
 def test_an_empty_merge_is_refused(session):
     with pytest.raises(SpecError, match="no destination|no part"):
         execute({"kind": "merge", "parts": [], "dest": None}, lambda *_: None)
+
+
+def test_ignore_gyro_uses_a_video_only_copy(monkeypatch, tmp_path):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(settings, "tmp_dir", tmp_path)
+    commands: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):  # noqa: ANN001
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"video only")
+
+    monkeypatch.setattr(executor_mod, "run_with_progress", fake_run)
+
+    clean = executor_mod._strip_gyro(source, lambda *_: None)
+
+    assert clean.exists()
+    assert clean != source
+    assert commands[0][commands[0].index("-map") + 1] == "0:v:0"
+    assert "-dn" in commands[0]
+    clean.unlink()
 
 
 class SilentDispatcher:

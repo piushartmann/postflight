@@ -234,6 +234,7 @@ class GradeOut(BaseSchema):
     progress: float
     params: dict[str, Any] = Field(default_factory=dict)
     analysis: dict[str, Any] = Field(default_factory=dict)
+    analysis_pending: bool = False
     # Where the two points would go if measured off this clip, or null for nowhere.
     # The judgement lives on the server (which side already clips, whether there is
     # enough unused range to bother); the button writes the answer into the sliders,

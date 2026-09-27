@@ -12,6 +12,7 @@ holding its own copy execute the identical spec.
 from __future__ import annotations
 
 import logging
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from .services import merge as merge_service
 from .services import proxy as proxy_service
 from .services.capabilities import detect
 from .services.gyroflow import Template
-from .services.procs import ProcessError, ProgressCallback
+from .services.procs import ProcessError, ProgressCallback, run_with_progress
 
 log = logging.getLogger(__name__)
 
@@ -126,21 +127,70 @@ def _run_render(spec: dict[str, Any], progress: ProgressCallback) -> dict[str, A
         data=payload["data"],
     )
 
-    result = gyroflow_service.render(
-        source=_source(spec),
-        template=template,
-        trim_ranges_ms=spec.get("trim_ranges_ms") or [],
-        out_dir=settings.out_dir,
-        out_filename=spec["out_filename"],
-        project_path=settings.projects_dir / spec["project_filename"],
-        progress_cb=progress,
-    )
+    source = _source(spec)
+    clean_source = None
+    if not bool((template.data.get("stabilization") or {}).get("stab_enabled", True)):
+        clean_source = _strip_gyro(source, progress)
+        source = clean_source
+    try:
+        result = gyroflow_service.render(
+            source=source,
+            template=template,
+            trim_ranges_ms=spec.get("trim_ranges_ms") or [],
+            out_dir=settings.out_dir,
+            out_filename=spec["out_filename"],
+            project_path=settings.projects_dir / spec["project_filename"],
+            progress_cb=progress,
+        )
+    finally:
+        if clean_source is not None:
+            clean_source.unlink(missing_ok=True)
     return {
         "out_path": to_relative(result.out_path),
         "project_path": to_relative(result.project_path),
         "processing_device": result.processing_device,
         "log_tail": result.log_tail,
     }
+
+
+def _strip_gyro(source: Path, progress: ProgressCallback) -> Path:
+    """Make a worker-local video-only copy for a render that ignores gyro data."""
+    settings.tmp_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=settings.tmp_dir, prefix="postflight-video-only-", suffix=".mp4", delete=False
+    ) as handle:
+        dest = Path(handle.name)
+    dest.unlink()
+    progress(0.0, "stripping gyro data")
+    try:
+        run_with_progress(
+            [
+                settings.ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-nostats",
+                "-y",
+                "-i",
+                str(source),
+                "-map",
+                "0:v:0",
+                "-an",
+                "-dn",
+                "-sn",
+                "-c:v",
+                "copy",
+                str(dest),
+            ],
+            timeout=3600,
+        )
+    except Exception:
+        dest.unlink(missing_ok=True)
+        raise
+    if not dest.exists() or dest.stat().st_size == 0:
+        dest.unlink(missing_ok=True)
+        raise SpecError("ffmpeg produced no video-only source")
+    return dest
 
 
 def _run_grade(spec: dict[str, Any], progress: ProgressCallback) -> dict[str, Any]:
@@ -163,10 +213,16 @@ def _run_grade(spec: dict[str, Any], progress: ProgressCallback) -> dict[str, An
     return {"out_path": to_relative(dest), "reused": False}
 
 
+def _run_analysis(spec: dict[str, Any], progress: ProgressCallback) -> dict[str, Any]:
+    source = _source(spec)
+    return {"analysis": grading_service.analyse(source).to_dict()}
+
+
 _EXECUTORS = {
     "merge": _run_merge,
     "proxy": _run_proxy,
     "render": _run_render,
+    "analysis": _run_analysis,
     "grade": _run_grade,
 }
 

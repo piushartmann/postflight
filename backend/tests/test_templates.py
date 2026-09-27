@@ -1,6 +1,6 @@
 """Gyroflow templates: editing one must not lose what the form does not show.
 
-A template is a partial Gyroflow project. The interface edits seven settings of it;
+A template is a partial Gyroflow project. The interface edits eight settings of it;
 the file holds a good deal more (per-axis smoothing, adaptive zoom, encoder options),
 and every one of those has to survive a save.
 """
@@ -35,7 +35,7 @@ def _patch(template_id: str, **values) -> schemas.TemplateOut:
 # What the interface reads
 # --------------------------------------------------------------------------- #
 
-def test_the_seven_settings_come_out_of_the_file(templates):
+def test_the_template_settings_come_out_of_the_file(templates):
     [horizontal] = [t for t in routes.get_templates() if t.id == "h_1080"]
 
     assert (horizontal.width, horizontal.height) == (1920, 1080)

@@ -100,6 +100,7 @@ const JOB_KINDS: Record<string, string> = {
   merge: "merge",
   proxy: "proxy",
   render: "stabilize",
+  analysis: "analyze",
   grade: "color",
 };
 

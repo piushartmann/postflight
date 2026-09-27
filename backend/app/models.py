@@ -34,6 +34,7 @@ class JobKind(str, enum.Enum):
     MERGE = "merge"
     PROXY = "proxy"
     RENDER = "render"
+    ANALYSIS = "analysis"
     GRADE = "grade"
 
 

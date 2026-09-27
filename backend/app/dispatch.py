@@ -114,6 +114,7 @@ OUTPUT_RATIO = {
     JobKind.MERGE: 1.0,
     JobKind.PROXY: 0.05,
     JobKind.RENDER: 0.3,
+    JobKind.ANALYSIS: 0.0,
     JobKind.GRADE: 1.0,
 }
 
@@ -126,6 +127,7 @@ RATE_KEYS = {
     JobKind.MERGE: "merge_mbps",
     JobKind.PROXY: "proxy_fps",
     JobKind.RENDER: "render_fps",
+    JobKind.ANALYSIS: "grade_fps",
     JobKind.GRADE: "grade_fps",
 }
 
@@ -223,11 +225,13 @@ def job_inputs(session: Session, job: Job) -> list[str]:
         ).all()
         return [c.raw_path for c in clips if c.raw_path]
 
-    if job.kind in (JobKind.PROXY, JobKind.RENDER):
+    if job.kind in (JobKind.PROXY, JobKind.RENDER, JobKind.ANALYSIS):
         sequence = session.get(Sequence, job.payload.get("sequence_id") or job.sequence_id)
-        if job.kind == JobKind.RENDER:
+        if job.kind in (JobKind.RENDER, JobKind.ANALYSIS):
             render = session.get(Render, job.payload.get("render_id") or job.render_id)
             sequence = session.get(Sequence, render.sequence_id) if render else sequence
+            if job.kind == JobKind.ANALYSIS:
+                return [render.out_path] if render and render.out_path else []
         return [sequence.merged_path] if sequence and sequence.merged_path else []
 
     grade = session.get(Grade, job.payload.get("grade_id") or job.grade_id)
@@ -360,10 +364,21 @@ def _prepare_grade(session: Session, job: Job) -> dict[str, Any]:
     }
 
 
+def _prepare_analysis(session: Session, job: Job) -> dict[str, Any]:
+    render = session.get(Render, job.payload.get("render_id") or job.render_id)
+    if render is None or not render.out_path:
+        raise PrepareError("stabilized clip not found")
+    return {
+        "source": render.out_path,
+        "frame_count": max(render.end_frame - render.start_frame + 1, 0),
+    }
+
+
 _PREPARERS = {
     JobKind.MERGE: _prepare_merge,
     JobKind.PROXY: _prepare_proxy,
     JobKind.RENDER: _prepare_render,
+    JobKind.ANALYSIS: _prepare_analysis,
     JobKind.GRADE: _prepare_grade,
 }
 
@@ -683,6 +698,15 @@ def _apply_render(session: Session, job: Job, result: dict[str, Any]) -> None:
     session.commit()
 
 
+def _apply_analysis(session: Session, job: Job, result: dict[str, Any]) -> None:
+    render = session.get(Render, job.payload.get("render_id") or job.render_id)
+    if render is None:
+        raise PrepareError(f"render {job.render_id} vanished mid-job")
+    render.analysis = result.get("analysis") or {}
+    session.add(render)
+    session.commit()
+
+
 def _apply_grade(session: Session, job: Job, result: dict[str, Any]) -> None:
     grade = session.get(Grade, job.payload.get("grade_id") or job.grade_id)
     if grade is None:
@@ -708,6 +732,7 @@ _APPLIERS = {
     JobKind.MERGE: _apply_merge,
     JobKind.PROXY: _apply_proxy,
     JobKind.RENDER: _apply_render,
+    JobKind.ANALYSIS: _apply_analysis,
     JobKind.GRADE: _apply_grade,
 }
 
@@ -728,9 +753,9 @@ def _magnitude(session: Session, job: Job, result: dict[str, Any] | None = None)
         return float(sequence.frame_count) if sequence else None
 
     render_id = job.payload.get("render_id") or job.render_id
-    if job.kind == JobKind.GRADE:
+    if job.kind in (JobKind.ANALYSIS, JobKind.GRADE):
         grade = session.get(Grade, job.payload.get("grade_id") or job.grade_id)
-        render_id = grade.render_id if grade else None
+        render_id = grade.render_id if grade else render_id
     render = session.get(Render, render_id) if render_id else None
     if render is None:
         return None
@@ -757,7 +782,7 @@ def observe(
     worker = session.get(Worker, worker_id)
     if worker is None:
         return
-    if result.get("reused"):
+    if result.get("reused") or job.kind == JobKind.ANALYSIS:
         # The output was already there, so the elapsed time is a directory lookup and
         # not a throughput. Measured on 2026-08-25, before this guard: nine reused
         # grades had folded the colour rate up to 406 909 img/s, which would make this
