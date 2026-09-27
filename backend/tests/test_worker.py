@@ -151,7 +151,7 @@ def test_an_empty_merge_is_refused(session):
 def test_ignore_gyro_uses_a_video_only_copy(monkeypatch, tmp_path):
     source = tmp_path / "source.mp4"
     source.write_bytes(b"source")
-    monkeypatch.setattr(settings, "tmp_dir", tmp_path)
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
     commands: list[list[str]] = []
 
     def fake_run(command, **_kwargs):  # noqa: ANN001
