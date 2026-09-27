@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -364,6 +365,7 @@ function EditForm({
     fov: template.fov,
     frame_offset_x: template.frame_offset_x,
     frame_offset_y: template.frame_offset_y,
+    ignore_gyro: template.ignore_gyro,
   });
 
   const save = useMutation({
@@ -411,6 +413,7 @@ function EditForm({
           fov: form.fov,
           frame_offset_x: form.frame_offset_x,
           frame_offset_y: form.frame_offset_y,
+          ignore_gyro: form.ignore_gyro,
         });
       }}
     >
@@ -493,6 +496,22 @@ function EditForm({
             </span>
           </div>
         ))}
+      </div>
+
+      <div className="flex items-start gap-2">
+        <Checkbox
+          id="ignore-gyro"
+          checked={form.ignore_gyro}
+          onCheckedChange={(checked) =>
+            setForm((f) => ({ ...f, ignore_gyro: checked === true }))
+          }
+        />
+        <div className="space-y-0.5">
+          <Label htmlFor="ignore-gyro" className="text-sm">Ignore gyro data</Label>
+          <p className="text-xs text-muted-foreground">
+            Render without stabilization when the gyro stream is corrupted or jittery.
+          </p>
+        </div>
       </div>
 
       <DialogFooter className="sm:justify-between">

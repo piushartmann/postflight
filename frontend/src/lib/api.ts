@@ -250,6 +250,7 @@ export interface Template {
   frame_offset_x: number;
   frame_offset_y: number;
   fov: number;
+  ignore_gyro: boolean;
 }
 
 /** The seven settings, as the edit form holds them. */
@@ -268,6 +269,7 @@ export type TemplateSettings = Partial<
     | "frame_offset_x"
     | "frame_offset_y"
     | "fov"
+    | "ignore_gyro"
   >
 >;
 

@@ -320,6 +320,7 @@ class TemplateOut(BaseSchema):
     frame_offset_x: float = 0.0
     frame_offset_y: float = 0.0
     fov: float = 1.0
+    ignore_gyro: bool = False
 
 
 class TemplateDefaults(BaseSchema):
@@ -363,6 +364,7 @@ class TemplatePatch(BaseSchema):
     frame_offset_x: float | None = Field(default=None, ge=-1, le=1)
     frame_offset_y: float | None = Field(default=None, ge=-1, le=1)
     fov: float | None = Field(default=None, ge=0.1, le=3)
+    ignore_gyro: bool | None = None
 
 
 class ScanOut(BaseSchema):

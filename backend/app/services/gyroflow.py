@@ -121,6 +121,7 @@ class Template:
             "frame_offset_x": float(offset[0] if len(offset) > 0 else 0.0),
             "frame_offset_y": float(offset[1] if len(offset) > 1 else 0.0),
             "fov": float(self._stab("fov", GYROFLOW_DEFAULTS["fov"])),
+            "ignore_gyro": not bool(self._stab("stab_enabled", True)),
         }
 
 
@@ -285,6 +286,8 @@ def apply_settings(data: dict[str, Any], values: dict[str, Any]) -> dict[str, An
         stab["lens_correction_amount"] = float(lens)
     if (fov := values.get("fov")) is not None:
         stab["fov"] = float(fov)
+    if (ignore_gyro := values.get("ignore_gyro")) is not None:
+        stab["stab_enabled"] = not bool(ignore_gyro)
     if values.get("frame_offset_x") is not None or values.get("frame_offset_y") is not None:
         current = stab.get("adaptive_zoom_center_offset") or [0.0, 0.0]
         stab["adaptive_zoom_center_offset"] = [

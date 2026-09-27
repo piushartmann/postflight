@@ -97,6 +97,22 @@ def test_smoothness_is_written_into_the_list_it_lives_in(templates):
     assert entry["value"] == 0.35
 
 
+def test_ignore_gyro_disables_stabilization_in_the_preset(templates, tmp_path):
+    saved = _patch("h_1080", ignore_gyro=True)
+    assert saved.ignore_gyro is True
+
+    preset = gyroflow.build_preset(
+        gyroflow.get_template("h_1080"), [], tmp_path, "output.mp4"
+    )
+    assert preset["stabilization"]["stab_enabled"] is False
+
+    _patch("h_1080", ignore_gyro=False)
+    preset = gyroflow.build_preset(
+        gyroflow.get_template("h_1080"), [], tmp_path, "output.mp4"
+    )
+    assert preset["stabilization"]["stab_enabled"] is True
+
+
 def test_the_frame_offset_is_a_pair(templates):
     saved = _patch("v_1080", frame_offset_y=-0.4)
 
